@@ -1132,6 +1132,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
         // Return cached metadata if we have it, and if the record's partition is either undefined
         // or within the known partition range
+        // 当存在该topic的分区信息,且当前的分区配置可以满足所请求的分区时,直接构建"等待信息"返回
         if (partitionsCount != null && (partition == null || partition < partitionsCount))
             return new ClusterAndWaitTime(cluster, 0);
 
@@ -1147,10 +1148,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             } else {
                 log.trace("Requesting metadata update for topic {}.", topic);
             }
+            // 核心: 当之前所验证的分区信息不符合条件时,依照metadata的更新版本进行阻塞等待更新
             metadata.add(topic, nowMs + elapsed);
             int version = metadata.requestUpdateForTopic(topic);
             sender.wakeup();
             try {
+                /**
+                 * 实际上就是阻塞等待最大等待时间,等待KafkaClient多路服用器更新metadata
+                 */
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
@@ -1172,6 +1177,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             partitionsCount = cluster.partitionCountForTopic(topic);
         } while (partitionsCount == null || (partition != null && partition >= partitionsCount));
 
+        // 待分区符合metadata时,返回等待信息
         producerMetrics.recordMetadataWait(time.nanoseconds() - nowNanos);
 
         return new ClusterAndWaitTime(cluster, elapsed);
